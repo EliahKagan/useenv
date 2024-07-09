@@ -29,11 +29,12 @@ fn main() {
         .wait()
         .expect("Failed to wait on child process")
         .code()
-        .unwrap_or(1);
+        .unwrap_or(1); // TODO: Maybe a higher value would be better here.
 
     std::process::exit(status);
 }
 
+#[derive(Default)]
 struct EnvironmentModification {
     clear_env: bool,
     unset_vars: Vec<String>,
@@ -47,16 +48,11 @@ fn bail(message: &str) -> ! {
 
 /// Use custom rules to parse options, `NAME=VALUE` pairs, and the command to run.
 ///
-/// This uses custom parsing because argument parsing libraries like Clap don't
-/// don't readily support the specific requirements of an `env`-like utility,
-/// such as arbitrary interleaving of options and `NAME=VALUE` pairs up until
+/// This uses custom parsing because I did not find an elegant way with Clap to
+/// allow options and `NAME=VALUE` pairs to be interleaved arbitrarily up until
 /// the command to be executed.
 fn parse_args(args: &[String]) -> (EnvironmentModification, Vec<String>) {
-    let mut env_mod = EnvironmentModification {
-        clear_env: false,
-        unset_vars: Vec::new(),
-        set_vars: Vec::new(),
-    };
+    let mut env_mod = EnvironmentModification::default();
     let mut child_cmdline = Vec::new();
     let mut i = 0;
 
