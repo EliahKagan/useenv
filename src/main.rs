@@ -8,10 +8,6 @@ fn main() {
     let our_args: Vec<String> = std::env::args().skip(1).collect();
     let (env_mod, child_cmdline) = parse_args(&our_args);
 
-    if child_cmdline.is_empty() {
-        bail("No command provided to run.");
-    }
-
     let mut child = std::process::Command::new(&child_cmdline[0]);
     child.args(&child_cmdline[1..]);
 
@@ -41,30 +37,24 @@ struct EnvironmentModification {
     set_vars: Vec<(String, String)>,
 }
 
-fn bail(message: &str) -> ! {
-    eprintln!("Error: {message}");
-    std::process::exit(2);
-}
-
 /// Use custom rules to parse options, `NAME=VALUE` pairs, and the command to run.
 ///
 /// This uses custom parsing because I did not find an elegant way with Clap to
 /// allow options and `NAME=VALUE` pairs to be interleaved arbitrarily up until
 /// the command to be executed.
+///
+/// This does not handle `--`, combined short options (e.g. `-iu`), or long
+/// options with `=` (i.e. no `--unset=NAME`; use `--unset NAME` or `-u NAME`).
 fn parse_args(args: &[String]) -> (EnvironmentModification, Vec<String>) {
     let mut env_mod = EnvironmentModification::default();
-    let mut child_cmdline = Vec::new();
     let mut i = 0;
 
     while i < args.len() {
-        // TODO: Handle '--' to explicitly mark the end of options.
         match args[i].as_str() {
-            // TODO: Support combining short options (e.g., -iu VARNAME).
             "-i" | "--ignore-environment" => env_mod.clear_env = true,
-            // TODO: Support long options with '=' (e.g., --unset=VARNAME).
             "-u" | "--unset" => {
                 if i + 1 >= args.len() {
-                    bail("-u/--unset requires an argument");
+                    panic!("-u/--unset requires an argument");
                 }
                 env_mod.unset_vars.push(args[i + 1].clone());
                 i += 1;
@@ -75,12 +65,12 @@ fn parse_args(args: &[String]) -> (EnvironmentModification, Vec<String>) {
                 }
             }
             _ => {
-                child_cmdline = args[i..].to_vec();
-                break;
+                let child_cmdline = args[i..].to_vec();
+                return (env_mod, child_cmdline);
             }
         }
         i += 1;
     }
 
-    (env_mod, child_cmdline)
+    panic!("No child command provided to run");
 }
