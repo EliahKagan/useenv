@@ -6,29 +6,27 @@
 
 use std::process;
 
-use clap::{crate_version, Arg, ArgAction, ArgMatches};
+use clap::{crate_version, Arg};
 
 fn main() {
     let matches = clap::Command::new("useenv")
         .version(crate_version!())
         .about("Run a program with a modified environment")
         .arg(
-            Arg::new("ignore-environment")
-                .short('i')
-                .long("ignore-environment")
-                .action(ArgAction::SetTrue),
+            Arg::new("args")
+                .num_args(0..)
+                .allow_hyphen_values(true)
+                .trailing_var_arg(true),
         )
-        .arg(
-            Arg::new("unset")
-                .short('u')
-                .long("unset")
-                .action(ArgAction::Append)
-                .num_args(1),
-        )
-        .arg(Arg::new("args").num_args(0..).allow_hyphen_values(true))
         .get_matches();
 
-    let (name_values, child_cmdline) = parse_args(&matches);
+    let args: Vec<String> = matches
+        .get_many::<String>("args")
+        .unwrap_or_default()
+        .cloned()
+        .collect();
+
+    let (clear_env, unset_vars, set_vars, child_cmdline) = parse_args(&args);
 
     if child_cmdline.is_empty() {
         eprintln!("Error: No command provided to run.");
@@ -38,13 +36,13 @@ fn main() {
     let mut child = process::Command::new(&child_cmdline[0]);
     child.args(&child_cmdline[1..]);
 
-    if matches.get_flag("ignore-environment") {
+    if clear_env {
         child.env_clear();
     }
-    for var in matches.get_many::<String>("unset").unwrap_or_default() {
+    for var in unset_vars {
         child.env_remove(var);
     }
-    child.envs(name_values);
+    child.envs(set_vars);
 
     let status = child
         .spawn()
@@ -52,26 +50,42 @@ fn main() {
         .wait()
         .expect("Failed to wait on child process")
         .code()
-        .unwrap_or(1); // TODO: Should some higher number be used?
+        .unwrap_or(1);
 
     process::exit(status);
 }
 
-fn parse_args(matches: &ArgMatches) -> (Vec<(String, String)>, Vec<String>) {
-    let mut name_values = Vec::new();
-    let mut command = Vec::new();
-    let mut in_command = false;
+/// Use custom rules to parse options, `NAME=VALUE` pairs, and the command to run.
+fn parse_args(args: &[String]) -> (bool, Vec<String>, Vec<(String, String)>, Vec<String>) {
+    let mut clear_env = false;
+    let mut unset_vars = Vec::new();
+    let mut set_vars = Vec::new();
+    let mut child_cmdline = Vec::new();
+    let mut i = 0;
 
-    for arg in matches.get_many::<String>("args").unwrap_or_default() {
-        if in_command {
-            command.push(arg.clone());
-        } else if let Some((name, value)) = arg.split_once('=') {
-            name_values.push((name.to_string(), value.to_string()));
-        } else {
-            in_command = true;
-            command.push(arg.clone());
+    while i < args.len() {
+        match args[i].as_str() {
+            "-i" | "--ignore-environment" => clear_env = true,
+            "-u" | "--unset" => {
+                if i + 1 >= args.len() {
+                    eprintln!("Error: -u/--unset requires an argument");
+                    process::exit(2);
+                }
+                unset_vars.push(args[i + 1].clone());
+                i += 1;
+            }
+            arg if arg.contains('=') => {
+                if let Some((name, value)) = arg.split_once('=') {
+                    set_vars.push((name.to_string(), value.to_string()));
+                }
+            }
+            _ => {
+                child_cmdline = args[i..].to_vec();
+                break;
+            }
         }
+        i += 1;
     }
 
-    (name_values, command)
+    (clear_env, unset_vars, set_vars, child_cmdline)
 }
