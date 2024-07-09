@@ -1,71 +1,77 @@
 //! Runs a program with a modified environment.
+//!
+//! This is inspired by the Unix `env` command but not equivalent to it. This is
+//! due both to non-portable aspects related to its typical implementation in
+//! terms of `exec`, and to the currently very rough condition this code is in.
 
-use std::str::FromStr;
+use std::process;
 
-use clap::{Arg, ArgAction};
-
-#[derive(Clone, Debug)]
-struct EnvVar {
-    name: String,
-    value: String,
-}
-
-impl FromStr for EnvVar {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.split_once('=') {
-            Some((name, value)) if !name.is_empty() => Ok(Self {
-                name: name.to_string(),
-                value: value.to_string(),
-            }),
-            Some(_) => Err(format!("NAME must be nonempty in NAME=VALUE (got {s:?})")),
-            None => Err(format!("Expected NAME=VALUE (got {s:?})")),
-        }
-    }
-}
+use clap::{crate_version, Arg, ArgAction, ArgMatches};
 
 fn main() {
     let matches = clap::Command::new("useenv")
-        .version("0.1.0")
+        .version(crate_version!())
         .about("Run a program with a modified environment")
         .arg(
             Arg::new("ignore-environment")
                 .short('i')
                 .long("ignore-environment")
-                .help("Clear all environment variables not explicitly set")
                 .action(ArgAction::SetTrue),
         )
         .arg(
             Arg::new("unset")
                 .short('u')
                 .long("unset")
-                .help("Clear a specific variable from the environment")
                 .action(ArgAction::Append)
                 .num_args(1),
         )
-        .arg(
-            Arg::new("NAME=VALUE")
-                .help("Set an environment variable of the given name and value")
-                .num_args(0..)
-                .value_name("NAME=VALUE")
-                .value_parser(EnvVar::from_str),
-        )
+        .arg(Arg::new("args").num_args(0..).allow_hyphen_values(true))
         .get_matches();
 
+    let (name_values, child_cmdline) = parse_args(&matches);
+
+    if child_cmdline.is_empty() {
+        eprintln!("Error: No command provided to run.");
+        process::exit(2);
+    }
+
+    let mut child = process::Command::new(&child_cmdline[0]);
+    child.args(&child_cmdline[1..]);
+
     if matches.get_flag("ignore-environment") {
-        println!("Clearing all environment variables not explicitly set");
+        child.env_clear();
     }
+    for var in matches.get_many::<String>("unset").unwrap_or_default() {
+        child.env_remove(var);
+    }
+    child.envs(name_values);
 
-    if let Some(unset_vars) = matches.get_many::<String>("unset") {
-        for var in unset_vars {
-            println!("Unsetting variable {:?}", var);
+    let status = child
+        .spawn()
+        .expect("Failed to execute command")
+        .wait()
+        .expect("Failed to wait on child process")
+        .code()
+        .unwrap_or(1); // TODO: Should some higher number be used?
+
+    process::exit(status);
+}
+
+fn parse_args(matches: &ArgMatches) -> (Vec<(String, String)>, Vec<String>) {
+    let mut name_values = Vec::new();
+    let mut command = Vec::new();
+    let mut in_command = false;
+
+    for arg in matches.get_many::<String>("args").unwrap_or_default() {
+        if in_command {
+            command.push(arg.clone());
+        } else if let Some((name, value)) = arg.split_once('=') {
+            name_values.push((name.to_string(), value.to_string()));
+        } else {
+            in_command = true;
+            command.push(arg.clone());
         }
     }
 
-    if let Some(env_vars) = matches.get_many::<EnvVar>("NAME=VALUE") {
-        for var in env_vars {
-            println!("Setting variable {:?} to value {:?}", var.name, var.value);
-        }
-    }
+    (name_values, command)
 }
