@@ -25,7 +25,7 @@ fn main() {
         .wait()
         .expect("Failed to wait on child process")
         .code()
-        .unwrap_or(1); // TODO: Maybe a higher value would be better here.
+        .expect("Subprocess terminated abnormally");
 
     std::process::exit(status);
 }
